@@ -1,6 +1,7 @@
 {
   "name": "document-guard",
   "description": "Prevents Claude from accidentally damaging important files. Intercepts Edit/Write operations and validates them against configurable protection rules including credential scanning, structural preservation, and semantic checks.",
+  "version": "1.0.0",
   "author": {
     "name": "David Moneil",
     "email": "davidmoneil@gmail.com"
