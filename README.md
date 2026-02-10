@@ -1,66 +1,156 @@
 # Document Guard
 
-**Prevents Claude from accidentally damaging important files.**
+**Take control of what your AI assistant can change.**
 
-A [Claude Code](https://docs.anthropic.com/en/docs/claude-code) plugin that intercepts Edit/Write operations and validates them against configurable protection rules. Blocks credential leaks, structural damage to config files, and accidental overwrites of critical infrastructure.
+Claude Code is powerful — it can read, write, and rewrite any file in your project. But power without guardrails is just risk. Document Guard gives you configurable, layered file protection that inspects every edit *before* it hits disk.
+
+No config required. Install it, and 11 protection rules are active immediately.
+
+## The Problem
+
+Claude Code has permission rules to control *which tools* can run. But once an Edit or Write is approved, nothing validates *what it writes*. That means:
+
+- A credential gets written into a git-tracked file — and pushed before you notice
+- A full-file rewrite silently drops sections from your `CLAUDE.md`
+- A config "fix" deletes top-level keys from your YAML
+- A "cleanup" strips the shebang from a shell script that runs in CI
+
+These aren't hypotheticals. They're the kinds of mistakes any AI assistant makes when it's optimizing for the task in front of it without awareness of the consequences.
+
+## See It In Action
+
+Claude tries to edit your `.env` file:
+
+```
+DOCUMENT GUARD [CRITICAL]: Edit blocked on .env
+
+Violations:
+  - [no_write_allowed] Root .env file cannot be modified by Claude. Edit manually.
+
+Matched rules: Root .env - total block
+
+To override: Ask the user for explicit approval, then write this file:
+  Path: .claude/logs/.document-guard-overrides.json
+  Content: {"overrides":[{"file":".env","reason":"User approved","expires":1739207400000}]}
+Then retry the edit. The override expires in 120 seconds and is single-use.
+```
+
+Claude tries to rewrite `CLAUDE.md` and drops a section:
+
+```
+DOCUMENT GUARD [CRITICAL]: Edit blocked on .claude/CLAUDE.md
+
+Violations:
+  - [section_preservation] Section "## Key References" would be removed
+  - [heading_structure] Heading "### Search Strategy" would be removed
+
+Matched rules: CLAUDE.md (nested) - protect structure
+```
+
+Claude writes code that contains an API key:
+
+```
+DOCUMENT GUARD [CRITICAL]: Edit blocked on src/config.js
+
+Violations:
+  - [credential_scan] Potential AWS Access Key detected in edit content
+
+Matched rules: credential_scan
+```
+
+Every block is logged. Every override requires explicit user approval and expires automatically.
+
+## How It Compares
+
+Document Guard fills a specific gap in the Claude Code safety stack:
+
+| Capability | Permission Rules | [Safety Net](https://github.com/kenryu42/claude-code-safety-net) | **Document Guard** |
+|------------|:---:|:---:|:---:|
+| Control which tools run | Yes | - | - |
+| Block dangerous shell commands | - | Yes | - |
+| Block credential leaks in file edits | - | - | Yes |
+| Preserve config structure (YAML keys, sections) | - | - | Yes |
+| Protect frontmatter fields | - | - | Yes |
+| Detect shebang removal | - | - | Yes |
+| Semantic content validation (Ollama) | - | - | Yes |
+| Configurable per-project rules | - | Yes | Yes |
+| Single-use override mechanism | - | - | Yes |
+| Audit logging | - | - | Yes |
+
+These tools are **complementary**. Permission Rules control access, Safety Net protects your shell, Document Guard protects your files. Use all three for defense in depth.
 
 ## Quick Install
 
 ```bash
-claude plugin add /path/to/aifred-document-guard
+# Add the marketplace
+claude plugin marketplace add davidmoneil/aifred-document-guard
+
+# Install the plugin
+claude plugin install document-guard@aifred-document-guard
 ```
 
-Or from the plugin directory:
+Or for quick testing without permanent install:
 
 ```bash
-claude plugin add .
+claude --plugin-dir /path/to/aifred-document-guard
 ```
 
-That's it. Document Guard starts protecting your project immediately with sensible defaults.
+That's it. No configuration needed — sensible defaults protect your project immediately.
 
 ## What It Protects (Out of the Box)
 
-| Tier | What | Why |
-|------|------|-----|
-| **Critical** | `.env` files | Prevents exposing secrets |
-| **Critical** | `.credentials/**` | Total write block on credential directories |
-| **Critical** | `.claude/settings.json` | Prevents key deletion in Claude settings |
-| **Critical** | `CLAUDE.md` | Prevents section/heading removal from project instructions |
-| **High** | `.claude/hooks/*.js` | Prevents shebang line removal |
-| **High** | `.claude/skills/*/SKILL.md` | Locks frontmatter identity fields |
-| **High** | `.claude/commands/*.md` | Locks skill routing field |
-| **Medium** | `**/*.sh` | Warns if shebang line is removed |
-| **Medium** | `.gitignore` | Warns if sections are removed |
-| **All files** | Credential scan | Blocks writes containing API keys, tokens, passwords |
+| Tier | What | Checks | Why |
+|------|------|--------|-----|
+| **Critical** | `.env` files | Total write block | Prevents exposing secrets |
+| **Critical** | `.credentials/**` | Total write block | Credential directories are untouchable |
+| **Critical** | `.claude/settings.json` | Key deletion protection | Prevents wiping Claude permissions |
+| **Critical** | `CLAUDE.md` | Section + heading preservation | Protects your project instructions |
+| **High** | `.claude/hooks/*.js` | Shebang preservation | Keeps your hooks executable |
+| **High** | `.claude/skills/*/SKILL.md` | Frontmatter lock | Protects skill identity fields |
+| **High** | `.claude/commands/*.md` | Frontmatter lock | Protects command routing |
+| **Medium** | `**/*.sh` | Shebang preservation | Warns on shebang removal |
+| **Medium** | `.gitignore` | Section preservation | Warns on section removal |
+| **All files** | Every edit | Credential scan | Blocks 13 credential patterns (AWS, GitHub, Stripe, etc.) |
 
-## Check Types
+## How It Works
 
-Document Guard runs 7 types of validation checks:
+Document Guard is a [PreToolUse hook](https://docs.anthropic.com/en/docs/claude-code/hooks) — it runs *before* every Edit and Write operation. The flow:
 
-### V1 Checks (enabled by default)
+```
+Claude wants to edit a file
+    ↓
+Document Guard intercepts the call
+    ↓
+Match file path against rules (glob patterns)
+    ↓
+Run applicable checks (credential scan, structure, etc.)
+    ↓
+No violations? → Allow the edit
+Violations found?
+    → Critical/High: Block. Log. Provide override instructions.
+    → Medium: Warn (inject context). Allow.
+    → Low: Log only. Allow.
+```
 
-1. **no_write_allowed** - Total write block. The file cannot be modified at all.
-2. **credential_scan** - Scans edit content for 13 credential patterns (AWS keys, GitHub tokens, private keys, etc.) with false-positive exclusions for placeholders.
-3. **key_deletion_protection** - Prevents removal of top-level YAML/config keys in full-file writes.
-4. **section_preservation** - Detects removal of `## Heading` sections in markdown files. Optionally restrict to specific section names.
-5. **heading_structure** - Detects removal of any heading (`#` through `######`) in full-file writes.
-6. **frontmatter_preservation** - Locks specific YAML frontmatter fields (e.g., `name`, `skill`, `created`).
-7. **shebang_preservation** - Detects removal of `#!/...` lines from scripts.
+**Four response tiers** give you graduated control:
 
-### V2 Check (opt-in, requires Ollama)
+| Tier | Behavior | When to use |
+|------|----------|-------------|
+| `critical` | Block + require override | Secrets, credentials, permissions |
+| `high` | Block + require override | Structural files, identity fields |
+| `medium` | Warn + allow | Scripts, configs where removal is suspicious but not catastrophic |
+| `low` | Log only | Audit trail without friction |
 
-8. **semantic_relevance** - Uses a local Ollama model to check if written content matches the file's declared purpose. Always warns (medium tier), never blocks.
+## Configuration
 
-## Two-Tier Configuration
-
-Document Guard uses a two-tier config system:
+### Two-Tier Config System
 
 1. **Project override** (highest priority): `.claude/hooks/document-guard.config.js`
 2. **Plugin default** (fallback): Bundled with the plugin
 
-The project config takes **full precedence** - if it exists, the plugin default is ignored entirely.
+If a project config exists, the plugin default is ignored entirely. This means you can fully customize behavior per-project.
 
-## Creating a Project Override
+### Creating a Project Override
 
 ```bash
 # Copy the plugin's default config as a starting point
@@ -69,7 +159,7 @@ cp "$(claude plugin path document-guard)/config/document-guard.config.js" \
    .claude/hooks/document-guard.config.js
 ```
 
-Then add project-specific rules:
+Then add your own rules:
 
 ```javascript
 // .claude/hooks/document-guard.config.js
@@ -100,20 +190,29 @@ module.exports = {
 };
 ```
 
-## Override Mechanism
+## Check Types
 
-When Document Guard blocks an edit, it provides instructions to create a single-use override:
+Document Guard runs **7 structural checks** and **1 semantic check**:
 
-1. Claude asks the user for explicit approval
-2. A JSON override file is written with the approved file path and expiration
-3. The edit is retried and succeeds
-4. The override is consumed (single-use) and logged
+### V1: Structural Checks (enabled by default)
 
-Overrides expire after a configurable TTL (default: 120 seconds).
+| Check | What It Does |
+|-------|-------------|
+| `no_write_allowed` | Total write block — file cannot be modified at all |
+| `credential_scan` | Scans for 13 credential patterns (AWS keys, GitHub tokens, private keys, JWTs, database URLs, etc.) with false-positive exclusions for placeholders |
+| `key_deletion_protection` | Detects removal of top-level keys in YAML/config files during full-file writes |
+| `section_preservation` | Detects removal of `## Heading` sections in markdown. Optionally restrict to specific sections |
+| `heading_structure` | Detects removal of any heading (`#` through `######`) in full-file writes |
+| `frontmatter_preservation` | Locks specific YAML frontmatter fields (e.g., `name`, `skill`, `created`) |
+| `shebang_preservation` | Detects removal of `#!/...` lines from scripts |
 
-## V2 Semantic Checks
+### V2: Semantic Check (opt-in, requires Ollama)
 
-Enable Ollama-based semantic validation for content relevance:
+| Check | What It Does |
+|-------|-------------|
+| `semantic_relevance` | Uses a local LLM to check if written content matches the file's declared purpose. Always warns, never blocks. Fails open if Ollama is unavailable. |
+
+Enable V2 in your config:
 
 ```javascript
 settings: {
@@ -127,7 +226,7 @@ settings: {
 }
 ```
 
-Add a `purpose` field to any rule to enable semantic checking:
+Add a `purpose` field to any rule to activate semantic checking:
 
 ```javascript
 {
@@ -139,25 +238,26 @@ Add a `purpose` field to any rule to enable semantic checking:
 }
 ```
 
-V2 checks always fail open (if Ollama is unavailable, the check is skipped) and always warn at medium tier (never block).
+## Override Mechanism
+
+When Document Guard blocks an edit, it doesn't just say "no" — it tells Claude exactly how to get approval:
+
+1. Claude asks you for explicit approval
+2. A JSON override file is written with the file path and expiration
+3. The edit is retried and succeeds
+4. The override is consumed (single-use) and logged
+
+Overrides expire after a configurable TTL (default: 120 seconds). No permanent bypasses.
 
 ## Audit Log
 
-All guard actions are logged to `.claude/logs/document-guard.jsonl`:
+Every action is recorded in `.claude/logs/document-guard.jsonl`:
 
 ```json
 {"timestamp":"2026-02-10T15:30:00.000Z","hook":"document-guard","version":2,"action":"blocked","file":".env","violations":[{"check":"no_write_allowed","tier":"critical","message":"Root .env file cannot be modified by Claude. Edit manually."}],"rules":["Root .env - total block"]}
 ```
 
 Actions: `blocked`, `warned`, `logged`, `override_used`
-
-## Environment Variables
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `DOCUMENT_GUARD_ENABLED` | `true` | Emergency kill switch (`false`/`0` disables all checks) |
-| `CLAUDE_PROJECT_DIR` | (set by Claude Code) | Project root for path resolution |
-| `CLAUDE_PLUGIN_ROOT` | (set by Claude Code) | Plugin root for default config |
 
 ## Status Command
 
@@ -168,6 +268,14 @@ Check the current state of Document Guard:
 ```
 
 Shows: active config source, settings, rules table, recent audit log entries, and active overrides.
+
+## Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DOCUMENT_GUARD_ENABLED` | `true` | Emergency kill switch (`false`/`0` disables all checks) |
+| `CLAUDE_PROJECT_DIR` | (set by Claude Code) | Project root for path resolution |
+| `CLAUDE_PLUGIN_ROOT` | (set by Claude Code) | Plugin root for default config |
 
 ## Part of the AIfred Ecosystem
 

@@ -36,6 +36,25 @@ const EDIT_TOOLS = new Set([
   'mcp__filesystem__edit_file', 'mcp__filesystem__write_file',
 ]);
 
+// --- Hook Output Helpers ---
+// Claude Code PreToolUse hooks require hookSpecificOutput format
+
+function hookAllow(additionalContext) {
+  var output = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } };
+  if (additionalContext) output.hookSpecificOutput.additionalContext = additionalContext;
+  console.log(JSON.stringify(output));
+}
+
+function hookDeny(reason) {
+  console.log(JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: reason,
+    },
+  }));
+}
+
 // --- Config Cache ---
 
 let configCache = null;
@@ -717,7 +736,7 @@ async function main() {
   try {
     context = JSON.parse(input);
   } catch (e) {
-    console.log(JSON.stringify({ proceed: true }));
+    hookAllow();
     return;
   }
 
@@ -726,14 +745,14 @@ async function main() {
 
   // Fast path: not an edit tool
   if (!EDIT_TOOLS.has(tool_name)) {
-    console.log(JSON.stringify({ proceed: true }));
+    hookAllow();
     return;
   }
 
   // Extract file path
   var filePath = extractFilePath(tool_name, tool_input);
   if (!filePath) {
-    console.log(JSON.stringify({ proceed: true }));
+    hookAllow();
     return;
   }
 
@@ -742,27 +761,27 @@ async function main() {
 
   // Skip override file itself
   if (absolutePath === OVERRIDE_FILE || relativePath.endsWith('.document-guard-overrides.json')) {
-    console.log(JSON.stringify({ proceed: true }));
+    hookAllow();
     return;
   }
 
   // Skip files outside project
   if (!absolutePath.startsWith(PROJECT_DIR)) {
-    console.log(JSON.stringify({ proceed: true }));
+    hookAllow();
     return;
   }
 
   // Load config
   var config = await loadConfig();
   if (!config) {
-    console.log(JSON.stringify({ proceed: true }));
+    hookAllow();
     return;
   }
 
   // Resolve toggles - check if guard is enabled
   var toggles = resolveToggles(config);
   if (!toggles.masterEnabled || (!toggles.v1Enabled && !toggles.v2Enabled)) {
-    console.log(JSON.stringify({ proceed: true }));
+    hookAllow();
     return;
   }
 
@@ -772,7 +791,7 @@ async function main() {
   // Get edit content info
   var editInfo = getEditInfo(tool_name, tool_input);
   if (!editInfo) {
-    console.log(JSON.stringify({ proceed: true }));
+    hookAllow();
     return;
   }
 
@@ -781,7 +800,7 @@ async function main() {
 
   // No violations - allow
   if (violations.length === 0) {
-    console.log(JSON.stringify({ proceed: true }));
+    hookAllow();
     return;
   }
 
@@ -802,18 +821,13 @@ async function main() {
       await consumeOverride(relativePath);
       await auditLog('override_used', relativePath, violations, rules);
       var overrideMsg = violations.map(function(v) { return v.message; }).join('; ');
-      console.log(JSON.stringify({
-        proceed: true,
-        hookSpecificOutput: {
-          additionalContext: 'DOCUMENT GUARD OVERRIDE USED on ' + path.basename(relativePath) + ': ' + overrideMsg + '. This override was approved by the user.',
-        },
-      }));
+      hookAllow('DOCUMENT GUARD OVERRIDE USED on ' + path.basename(relativePath) + ': ' + overrideMsg + '. This override was approved by the user.');
       return;
     }
 
     await auditLog('blocked', relativePath, violations, rules);
     var message = formatBlockMessage(relativePath, violations, rules, config);
-    console.log(JSON.stringify({ proceed: false, message: message }));
+    hookDeny(message);
     return;
   }
 
@@ -821,21 +835,16 @@ async function main() {
   if (highestTier === 'medium') {
     await auditLog('warned', relativePath, violations, rules);
     var warnMsg = violations.map(function(v) { return '[' + v.check + '] ' + v.message; }).join('; ');
-    console.log(JSON.stringify({
-      proceed: true,
-      hookSpecificOutput: {
-        additionalContext: 'Document Guard warning on ' + path.basename(relativePath) + ': ' + warnMsg,
-      },
-    }));
+    hookAllow('Document Guard warning on ' + path.basename(relativePath) + ': ' + warnMsg);
     return;
   }
 
   // Low: log only
   await auditLog('logged', relativePath, violations, rules);
-  console.log(JSON.stringify({ proceed: true }));
+  hookAllow();
 }
 
 main().catch(function(err) {
   console.error('[document-guard] Fatal error: ' + err.message);
-  console.log(JSON.stringify({ proceed: true }));
+  hookAllow();
 });
