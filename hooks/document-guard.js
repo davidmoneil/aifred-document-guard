@@ -126,10 +126,12 @@ function toAbsolutePath(filePath) {
 function matchGlob(pattern, filePath) {
   let regex = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*\//g, '<<<GLOBSTAR_SLASH>>>')
     .replace(/\*\*/g, '<<<GLOBSTAR>>>')
+    .replace(/\?/g, '[^/]')
     .replace(/\*/g, '[^/]*')
-    .replace(/<<<GLOBSTAR>>>/g, '.*')
-    .replace(/\?/g, '[^/]');
+    .replace(/<<<GLOBSTAR_SLASH>>>/g, '(.*/)?')
+    .replace(/<<<GLOBSTAR>>>/g, '.*');
 
   if (!pattern.startsWith('.') && !pattern.startsWith('/')) {
     regex = '(?:^|/)' + regex;
