@@ -1,0 +1,43 @@
+{
+  "description": "Document Guard - file protection hooks that validate edits against configurable rules",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/document-guard.js"
+          }
+        ],
+        "matcher": "Edit"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/document-guard.js"
+          }
+        ],
+        "matcher": "Write"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/document-guard.js"
+          }
+        ],
+        "matcher": "mcp__filesystem__edit_file"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/document-guard.js"
+          }
+        ],
+        "matcher": "mcp__filesystem__write_file"
+      }
+    ]
+  }
+}
