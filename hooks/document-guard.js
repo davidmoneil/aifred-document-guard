@@ -140,9 +140,27 @@ function toAbsolutePath(filePath) {
   return path.join(PROJECT_DIR, filePath);
 }
 
+// --- Pattern Validation ---
+
+function validatePattern(pattern) {
+  if (typeof pattern !== 'string' || pattern.length === 0) return false;
+  // Block path traversal sequences
+  if (/(?:^|\/)\.\.(?:\/|$)/.test(pattern)) return false;
+  // Block absolute paths
+  if (pattern.startsWith('/')) return false;
+  // Limit length to prevent excessive regex compilation
+  if (pattern.length > 500) return false;
+  // Limit globstar count to prevent ReDoS from nested quantifiers
+  var globstarCount = (pattern.match(/\*\*/g) || []).length;
+  if (globstarCount > 5) return false;
+  return true;
+}
+
 // --- Glob Matching ---
 
 function matchGlob(pattern, filePath) {
+  if (!validatePattern(pattern)) return false;
+
   let regex = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
     .replace(/\*\*\//g, '<<<GLOBSTAR_SLASH>>>')
@@ -166,6 +184,9 @@ function patternSpecificity(pattern) {
 // --- Rule Matching ---
 
 function findMatchingRules(config, relativePath) {
+  // Reject relative paths that somehow contain traversal sequences
+  if (/(?:^|\/)\.\.(?:\/|$)/.test(relativePath)) return [];
+
   var matched = [];
   for (var i = 0; i < config.rules.length; i++) {
     if (matchGlob(config.rules[i].pattern, relativePath)) {

@@ -269,6 +269,64 @@ Check the current state of Document Guard:
 
 Shows: active config source, settings, rules table, recent audit log entries, and active overrides.
 
+## Troubleshooting
+
+### Hook Not Running
+
+**Symptom**: Edits to protected files succeed without any block or warning messages.
+
+1. Check if the plugin is installed: `claude plugin list`
+2. Verify hook registration exists in `.claude-plugin/plugin.json`
+3. Check the emergency kill switch: `echo $DOCUMENT_GUARD_ENABLED` (should not be `false` or `0`)
+4. Run `/document-guard:status` for a full diagnostic
+
+### Edit Allowed When It Should Block
+
+**Symptom**: A file edit succeeds but you expected it to be blocked.
+
+1. Run `/document-guard:status` to see the active config and rules
+2. Verify your rule's glob pattern matches the file path — patterns are relative to project root
+3. Check toggles: `settings.v1.enabled` and `settings.v1.structuralChecks` must be `true`
+4. Check audit log for clues: `tail -5 .claude/logs/document-guard.jsonl`
+
+### Override Not Working
+
+**Symptom**: You created an override JSON but the edit is still blocked.
+
+1. File path in the override must match exactly (relative to project root, e.g. `.env` not `/.env`)
+2. The `expires` timestamp must be in the future and in **milliseconds** since epoch
+3. Override file must be at `.claude/logs/.document-guard-overrides.json`
+4. Overrides are single-use — they're consumed after one successful edit
+
+### Semantic Check Not Working (V2)
+
+**Symptom**: Rules with a `purpose` field don't trigger semantic validation.
+
+1. Verify Ollama is running: `curl http://localhost:11434/api/tags`
+2. Check V2 is enabled in config: `settings.v2.enabled: true`
+3. Verify the model is available: `ollama list | grep qwen2.5`
+4. Try increasing the timeout: `v2.timeout: 10000` in config
+
+### Temporarily Disable All Checks
+
+Set the environment variable before starting Claude:
+
+```bash
+export DOCUMENT_GUARD_ENABLED=false
+claude
+```
+
+Or disable specific check categories in your config:
+
+```javascript
+settings: {
+  v1: {
+    credentialScan: false,      // Disable credential scanning
+    structuralChecks: false,    // Disable structural checks
+  }
+}
+```
+
 ## Environment Variables
 
 | Variable | Default | Purpose |
